@@ -1,0 +1,11 @@
+firebase_config.py
+serviceAccount.json
+stripe_config.py
+.env
+__pycache__/
+*.pyc
+database/
+uploaded_pdfs/
+my_brain/
+pdf_brain/
+.vscode/
