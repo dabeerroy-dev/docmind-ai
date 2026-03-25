@@ -8,8 +8,6 @@
 import firebase_admin
 from firebase_admin import credentials, auth
 
-# pyrebase4: handles login from Python
-import pyrebase
 
 # os: file operations
 import os
@@ -36,15 +34,8 @@ if not firebase_admin._apps:
     # Connect to Firebase project
     firebase_admin.initialize_app(cred)
     print("Firebase Admin initialized!")
-
-# ============================================
-# INITIALIZE PYREBASE
-# Used for login from Python (client side)
-# ============================================
-firebase = pyrebase.initialize_app(FIREBASE_CONFIG)
-
-# Auth object for login/signup operations
-pb_auth = firebase.auth()
+import requests as req
+FIREBASE_API_KEY = FIREBASE_CONFIG["apiKey"]
 
 # ============================================
 # FUNCTION 1: Sign Up New User
@@ -78,19 +69,23 @@ def signup_user(email, password, display_name):
 # Input: email + password
 # Output: token + user info or error
 # ============================================
-def login_user(email, password):
+    def login_user(email, password):
     try:
-        # Login with pyrebase
-        user = pb_auth.sign_in_with_email_and_password(
-            email, password
-        )
-        # Get user token
-        token = user["idToken"]
-        # Get user info
-        user_info = pb_auth.get_account_info(token)
-        name = user_info["users"][0].get(
-            "displayName", email
-        )
+        # Login using Firebase REST API
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
+        payload = {
+            "email": email,
+            "password": password,
+            "returnSecureToken": True
+        }
+        response = req.post(url, json=payload)
+        data = response.json()
+
+        if "error" in data:
+            return {"success": False, "error": "Wrong email or password!"}
+
+        token = data["idToken"]
+        name = data.get("displayName", email)
         print(f"User logged in: {email}")
         return {
             "success": True,
