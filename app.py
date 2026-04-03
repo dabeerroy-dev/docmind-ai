@@ -6,7 +6,6 @@ import streamlit as st
 from auth import signup_user, login_user, verify_token
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
 import chromadb
 from groq import Groq
@@ -421,22 +420,18 @@ else:
                         if c.page_content.strip()
                     ]
 
-                    embedder = SentenceTransformer("all-MiniLM-L6-v2")
                     db = chromadb.EphemeralClient()
-                    try:
-                        db.delete_collection("pdf_docs")
-                    except:
-                        pass
-                    col = db.create_collection("pdf_docs")
-                    embs = embedder.encode(texts).tolist()
-                    col.add(
-                        documents=texts,
-                        embeddings=embs,
-                        ids=[f"c_{i}" for i in range(len(texts))]
-                    )
-                    st.session_state.collection = col
-                    st.session_state.all_texts = texts
-                    st.session_state.embedder = embedder
+try:
+    db.delete_collection("pdf_docs")
+except:
+    pass
+col = db.create_collection("pdf_docs")
+col.add(
+    documents=texts,
+    ids=[f"c_{i}" for i in range(len(texts))]
+)
+st.session_state.collection = col
+st.session_state.all_texts = texts
                     st.session_state.pdf_ready = True
                     st.session_state.pdf_name = uploaded.name
                 st.rerun()
@@ -480,52 +475,57 @@ else:
                 groq_client = Groq(
                     api_key=os.environ.get("GROQ_API_KEY")
                 )
-                reranker = CrossEncoder(
-                    "cross-encoder/ms-marco-MiniLM-L-6-v2"
-                )
-
                 with st.spinner("⚡ Thinking..."):
-                    # Multi query
-                    r = groq_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content":
-                            f"Generate 3 search queries for: {question}\n"
-                            f"Return 3 questions only, one per line."}]
-                    )
-                    queries = r.choices[0].message.content.strip().split("\n")
-                    queries.append(question)
+    # Multi query
+    r = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content":
+            f"Generate 3 search queries for: {question}\n"
+            f"Return 3 questions only, one per line."}]
+    )
+    queries = r.choices[0].message.content.strip().split("\n")
+    queries.append(question)
 
-                    # Hybrid search
-                    all_chunks = []
-                    for q in queries:
-                        q_emb = st.session_state.embedder.encode(
-                            [q]
-                        ).tolist()
-                        vr = st.session_state.collection.query(
-                            query_embeddings=q_emb, n_results=3
-                        )
-                        all_chunks.extend(vr["documents"][0])
-                        tokenized = [
-                            t.lower().split()
-                            for t in st.session_state.all_texts
-                        ]
-                        bm25 = BM25Okapi(tokenized)
-                        scores = bm25.get_scores(q.lower().split())
-                        top_idx = sorted(
-                            range(len(scores)),
-                            key=lambda i: scores[i],
-                            reverse=True
-                        )[:3]
-                        all_chunks.extend([
-                            st.session_state.all_texts[i]
-                            for i in top_idx
-                        ])
+    # Hybrid search
+    all_chunks = []
+    for q in queries:
+        # Vector search via ChromaDB
+        vr = st.session_state.collection.query(
+            query_texts=[q], n_results=3
+        )
+        all_chunks.extend(vr["documents"][0])
 
-                    unique = list(set(all_chunks))
-                    pairs = [[question, c] for c in unique]
-                    sc = reranker.predict(pairs)
-                    ranked = sorted(zip(sc, unique), reverse=True)
-                    best = [c for _, c in ranked[:3]]
+        # BM25 keyword search
+        tokenized = [
+            t.lower().split()
+            for t in st.session_state.all_texts
+        ]
+        bm25 = BM25Okapi(tokenized)
+        scores = bm25.get_scores(q.lower().split())
+        top_idx = sorted(
+            range(len(scores)),
+            key=lambda i: scores[i],
+            reverse=True
+        )[:3]
+        all_chunks.extend([
+            st.session_state.all_texts[i]
+            for i in top_idx
+        ])
+
+    # Remove duplicates
+    unique = list(set(all_chunks))
+
+    # Simple keyword reranking - no torch needed!
+    q_words = set(question.lower().split())
+    scored = []
+    for chunk in unique:
+        c_words = set(chunk.lower().split())
+        score = len(q_words & c_words) / max(
+            len(q_words | c_words), 1
+        )
+        scored.append((score, chunk))
+    scored.sort(reverse=True)
+    best = [c for _, c in scored[:3]]
 
                     context = "\n\n".join(best)
                     history = ""
