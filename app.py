@@ -421,15 +421,15 @@ else:
                     ]
 
                     db = chromadb.EphemeralClient()
-try:
-    db.delete_collection("pdf_docs")
-except:
-    pass
-col = db.create_collection("pdf_docs")
-col.add(
-    documents=texts,
-    ids=[f"c_{i}" for i in range(len(texts))]
-)
+                    try:
+                        db.delete_collection("pdf_docs")
+                    except:
+                        pass
+                    col = db.create_collection("pdf_docs")
+                    col.add(
+                        documents=texts,
+                        ids=[f"c_{i}" for i in range(len(texts))]
+                    )
                     st.session_state.collection = col
                     st.session_state.all_texts = texts
                     st.session_state.pdf_ready = True
@@ -438,10 +438,10 @@ col.add(
         else:
             st.success(f"✅ {st.session_state.pdf_name} ready!")
 
-            if st.button("📄 Upload New PDF"):
-                st.session_state.pdf_ready = False
-                st.session_state.messages = []
-                st.rerun()
+        if st.button("📄 Upload New PDF"):
+            st.session_state.pdf_ready = False
+            st.session_state.messages = []
+            st.rerun()
 
             st.markdown("<br>", unsafe_allow_html=True)
 
