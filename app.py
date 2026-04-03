@@ -1,4 +1,4 @@
-# ============================================
+ # ============================================
 # DOCMIND AI — International Level SaaS
 # Firebase Auth + Hybrid RAG + Beautiful UI
 # ============================================
@@ -430,8 +430,8 @@ col.add(
     documents=texts,
     ids=[f"c_{i}" for i in range(len(texts))]
 )
-st.session_state.collection = col
-st.session_state.all_texts = texts
+                    st.session_state.collection = col
+                    st.session_state.all_texts = texts
                     st.session_state.pdf_ready = True
                     st.session_state.pdf_name = uploaded.name
                 st.rerun()
