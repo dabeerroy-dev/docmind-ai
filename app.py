@@ -1,18 +1,16 @@
-# ============================================
+ # ============================================
 # DOCMIND AI — International Level SaaS
 # Firebase Auth + Hybrid RAG + Beautiful UI
-# FIXED: ChromaDB embedding issue + deployment errors
 # ============================================
 import streamlit as st
-from auth import signup_user, login_user
+from auth import signup_user, login_user, verify_token
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from rank_bm25 import BM25Okapi
-from pypdf import PdfReader         # FIXED: use pypdf directly (no langchain loader needed)
-from fastembed import TextEmbedding  # FIXED: lightweight embeddings, no torch!
+import chromadb
 from groq import Groq
 import tempfile
 import os
-import numpy as np
 
 # ============================================
 # PAGE CONFIG
@@ -69,6 +67,14 @@ st.markdown("""
     letter-spacing: 3px;
     text-transform: uppercase;
     margin-bottom: 2rem;
+}
+
+.auth-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    padding: 2.5rem;
+    box-shadow: 0 25px 50px rgba(0,0,0,0.5);
 }
 
 .user-bubble {
@@ -146,82 +152,7 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
 """, unsafe_allow_html=True)
 
 # ============================================
-# EMBEDDING MODEL — loaded once and cached
-# Using fastembed: lightweight, no PyTorch needed!
-# @st.cache_resource means it loads only ONCE
-# even when the user interacts with the app
-# ============================================
-@st.cache_resource
-def load_embedding_model():
-    """
-    Load the fastembed model once and reuse it.
-    This prevents reloading the model on every interaction.
-    ~50MB download, much faster than torch's 2GB!
-    """
-    print("Loading fastembed model...")
-    model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-    print("Embedding model ready!")
-    return model
-
-
-def embed_texts(model, texts: list) -> np.ndarray:
-    """
-    Convert a list of text strings into vectors (embeddings).
-    Returns a numpy array of shape (num_texts, embedding_dim).
-    """
-    # fastembed returns a generator → convert to list → stack into array
-    embeddings = list(model.embed(texts))
-    return np.array(embeddings)
-
-
-def cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
-    """
-    Calculate how similar two vectors are.
-    Returns a number between 0 (different) and 1 (identical).
-    This is how we do semantic search without ChromaDB's query_texts!
-    """
-    # Dot product divided by product of magnitudes
-    dot = np.dot(vec_a, vec_b)
-    norm_a = np.linalg.norm(vec_a)
-    norm_b = np.linalg.norm(vec_b)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(dot / (norm_a * norm_b))
-
-
-def vector_search(
-    query_embedding: np.ndarray,
-    doc_embeddings: np.ndarray,
-    texts: list,
-    top_k: int = 3
-) -> list:
-    """
-    Search for the most similar text chunks to a query.
-    Pure numpy — no ChromaDB query_texts needed!
-
-    How it works:
-    1. Calculate similarity between query and EVERY chunk
-    2. Sort by similarity score
-    3. Return top_k best matches
-    """
-    # Calculate similarity to every stored chunk
-    scores = [
-        cosine_similarity(query_embedding, doc_embeddings[i])
-        for i in range(len(doc_embeddings))
-    ]
-    # Get indices of top_k highest scores
-    top_indices = sorted(
-        range(len(scores)),
-        key=lambda i: scores[i],
-        reverse=True
-    )[:top_k]
-
-    # Return the actual text chunks
-    return [texts[i] for i in top_indices]
-
-
-# ============================================
-# SESSION STATE INITIALIZATION
+# SESSION STATE
 # ============================================
 for key, val in {
     "logged_in": False,
@@ -231,7 +162,7 @@ for key, val in {
     "uid": "",
     "messages": [],
     "pdf_ready": False,
-    "doc_embeddings": None,   # FIXED: store embeddings as numpy array
+    "collection": None,
     "all_texts": [],
     "pdf_name": "",
     "auth_mode": "login"
@@ -255,24 +186,20 @@ if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
 
-        # Toggle tabs
+        # Tab buttons
         t1, t2 = st.columns(2)
         with t1:
-            if st.button(
-                "Sign In",
+            if st.button("Sign In",
                 use_container_width=True,
                 type="primary" if st.session_state.auth_mode == "login"
-                else "secondary"
-            ):
+                else "secondary"):
                 st.session_state.auth_mode = "login"
                 st.rerun()
         with t2:
-            if st.button(
-                "Sign Up",
+            if st.button("Sign Up",
                 use_container_width=True,
                 type="primary" if st.session_state.auth_mode == "signup"
-                else "secondary"
-            ):
+                else "secondary"):
                 st.session_state.auth_mode = "signup"
                 st.rerun()
 
@@ -287,7 +214,9 @@ if not st.session_state.logged_in:
                 Welcome Back 👋
             </div>""", unsafe_allow_html=True)
 
-            email = st.text_input("Email", placeholder="Enter your email")
+            email = st.text_input(
+                "Email", placeholder="Enter your email"
+            )
             password = st.text_input(
                 "Password", type="password",
                 placeholder="Enter your password"
@@ -320,8 +249,12 @@ if not st.session_state.logged_in:
                 Create Account 🚀
             </div>""", unsafe_allow_html=True)
 
-            name = st.text_input("Full Name", placeholder="Your name")
-            email = st.text_input("Email", placeholder="your@email.com")
+            name = st.text_input(
+                "Full Name", placeholder="Your name"
+            )
+            email = st.text_input(
+                "Email", placeholder="your@email.com"
+            )
             password = st.text_input(
                 "Password", type="password",
                 placeholder="Min 6 characters"
@@ -333,7 +266,10 @@ if not st.session_state.logged_in:
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            if st.button("Create Account →", use_container_width=True):
+            if st.button(
+                "Create Account →",
+                use_container_width=True
+            ):
                 if not all([name, email, password, confirm]):
                     st.warning("Please fill all fields!")
                 elif len(password) < 6:
@@ -342,9 +278,13 @@ if not st.session_state.logged_in:
                     st.error("Passwords do not match!")
                 else:
                     with st.spinner("Creating account..."):
-                        result = signup_user(email, password, name)
+                        result = signup_user(
+                            email, password, name
+                        )
                     if result["success"]:
-                        st.success("Account created! Please sign in!")
+                        st.success(
+                            "Account created! Please sign in!"
+                        )
                         st.session_state.auth_mode = "login"
                         st.rerun()
                     else:
@@ -376,10 +316,12 @@ else:
                     👤
                 </div>
                 <div>
-                    <div style='color:white; font-weight:600; font-size:0.9rem;'>
+                    <div style='color:white; font-weight:600;
+                                font-size:0.9rem;'>
                         {st.session_state.username}
                     </div>
-                    <div style='color:rgba(255,255,255,0.4); font-size:0.75rem;'>
+                    <div style='color:rgba(255,255,255,0.4);
+                                font-size:0.75rem;'>
                         {st.session_state.email}
                     </div>
                 </div>
@@ -389,7 +331,10 @@ else:
 
         page = st.radio(
             "",
-            ["🏠  Dashboard", "💬  Chat", "📊  Analytics", "⚙️  Settings"],
+            ["🏠  Dashboard",
+             "💬  Chat",
+             "📊  Analytics",
+             "⚙️  Settings"],
             label_visibility="collapsed"
         )
 
@@ -427,7 +372,8 @@ else:
                     <div class='stat-number'>{num}</div>
                     <div style='color:rgba(255,255,255,0.5);
                                 font-size:0.8rem; margin-top:4px;
-                                text-transform:uppercase; letter-spacing:1px;'>
+                                text-transform:uppercase;
+                                letter-spacing:1px;'>
                         {label}
                     </div>
                 </div>""", unsafe_allow_html=True)
@@ -449,66 +395,57 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Load embedding model (cached — only loads once)
-        embed_model = load_embedding_model()
-
-        # ---- PDF UPLOAD ----
         if not st.session_state.pdf_ready:
             uploaded = st.file_uploader(
                 "Upload PDF", type="pdf",
                 label_visibility="collapsed"
             )
-
             if uploaded:
-                with st.spinner("⚡ Processing your PDF..."):
+                with st.spinner("⚡ Processing..."):
+                    with tempfile.NamedTemporaryFile(
+                        delete=False, suffix=".pdf"
+                    ) as tmp:
+                        tmp.write(uploaded.read())
+                        tmp_path = tmp.name
 
-                    # STEP 1: Extract text from PDF using pypdf directly
-                    # (removed PyPDFLoader which needs langchain_community)
-                    reader = PdfReader(uploaded)
-                    raw_text = ""
-                    for page in reader.pages:
-                        page_text = page.extract_text()
-                        if page_text:
-                            raw_text += page_text + "\n"
-
-                    # STEP 2: Split into chunks
+                    from langchain_community.document_loaders import PyPDFLoader
+                    loader = PyPDFLoader(tmp_path)
+                    pages = loader.load()
                     splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=500,
-                        chunk_overlap=50
+                        chunk_size=500, chunk_overlap=50
                     )
-                    chunks = splitter.split_text(raw_text)
-                    # Remove empty chunks
-                    texts = [c.strip() for c in chunks if c.strip()]
+                    chunks = splitter.split_documents(pages)
+                    texts = [
+                        c.page_content for c in chunks
+                        if c.page_content.strip()
+                    ]
 
-                    # STEP 3: Embed all chunks using fastembed
-                    # This creates a numpy array of vectors
-                    # Shape: (number_of_chunks, 384)
-                    # We store these in session_state for reuse
-                    doc_embeddings = embed_texts(embed_model, texts)
-
-                    # STEP 4: Save to session state
-                    st.session_state.doc_embeddings = doc_embeddings
+                    db = chromadb.EphemeralClient()
+                    try:
+                        db.delete_collection("pdf_docs")
+                    except:
+                        pass
+                    col = db.create_collection("pdf_docs")
+                    col.add(
+                        documents=texts,
+                        ids=[f"c_{i}" for i in range(len(texts))]
+                    )
+                    st.session_state.collection = col
                     st.session_state.all_texts = texts
                     st.session_state.pdf_ready = True
                     st.session_state.pdf_name = uploaded.name
-
                 st.rerun()
-
-        # ---- CHAT INTERFACE ----
         else:
             st.success(f"✅ {st.session_state.pdf_name} ready!")
 
-            if st.button("📄 Upload New PDF"):
-                # Reset PDF state but keep user logged in
-                st.session_state.pdf_ready = False
-                st.session_state.doc_embeddings = None
-                st.session_state.all_texts = []
-                st.session_state.messages = []
-                st.rerun()
+        if st.button("📄 Upload New PDF"):
+            st.session_state.pdf_ready = False
+            st.session_state.messages = []
+            st.rerun()
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # Show chat history
+            # Show messages
             for msg in st.session_state.messages:
                 if msg["role"] == "user":
                     st.markdown(
@@ -530,143 +467,87 @@ else:
                         unsafe_allow_html=True
                     )
 
-            # Chat input box
-            question = st.chat_input("Ask anything about your document...")
+            question = st.chat_input(
+                "Ask anything about your document..."
+            )
 
             if question:
-                groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
+                groq_client = Groq(
+                    api_key=os.environ.get("GROQ_API_KEY")
+                )
                 with st.spinner("⚡ Thinking..."):
+    # Multi query
+    r = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content":
+            f"Generate 3 search queries for: {question}\n"
+            f"Return 3 questions only, one per line."}]
+    )
+    queries = r.choices[0].message.content.strip().split("\n")
+    queries.append(question)
 
-                    # ---- STEP 1: MULTI-QUERY GENERATION ----
-                    # Ask the LLM to rephrase the question 3 ways
-                    # More query variations = better retrieval!
-                    r = groq_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{
-                            "role": "user",
-                            "content": (
-                                f"Generate 3 search queries for: {question}\n"
-                                f"Return 3 questions only, one per line."
-                            )
-                        }],
-                        max_tokens=200,
-                        temperature=0.7
-                    )
-                    # Split response into individual queries
-                    generated = r.choices[0].message.content.strip().split("\n")
-                    # Clean up numbered lists like "1. What is..."
-                    generated = [
-                        q.lstrip("0123456789.-) ").strip()
-                        for q in generated if q.strip()
-                    ]
-                    # Always include the original question too
-                    queries = generated + [question]
+    # Hybrid search
+    all_chunks = []
+    for q in queries:
+        # Vector search via ChromaDB
+        vr = st.session_state.collection.query(
+            query_texts=[q], n_results=3
+        )
+        all_chunks.extend(vr["documents"][0])
 
-                    # ---- STEP 2: HYBRID SEARCH ----
-                    # For each query variation, do BOTH:
-                    # A) Vector search (semantic meaning)
-                    # B) BM25 keyword search (exact words)
-                    all_chunks = []
+        # BM25 keyword search
+        tokenized = [
+            t.lower().split()
+            for t in st.session_state.all_texts
+        ]
+        bm25 = BM25Okapi(tokenized)
+        scores = bm25.get_scores(q.lower().split())
+        top_idx = sorted(
+            range(len(scores)),
+            key=lambda i: scores[i],
+            reverse=True
+        )[:3]
+        all_chunks.extend([
+            st.session_state.all_texts[i]
+            for i in top_idx
+        ])
 
-                    for q in queries:
+    # Remove duplicates
+    unique = list(set(all_chunks))
 
-                        # A) VECTOR SEARCH — embed query and find similar chunks
-                        # This finds chunks with similar MEANING
-                        q_embedding = embed_texts(embed_model, [q])[0]
-                        vector_results = vector_search(
-                            q_embedding,
-                            st.session_state.doc_embeddings,
-                            st.session_state.all_texts,
-                            top_k=3
-                        )
-                        all_chunks.extend(vector_results)
+    # Simple keyword reranking - no torch needed!
+    q_words = set(question.lower().split())
+    scored = []
+    for chunk in unique:
+        c_words = set(chunk.lower().split())
+        score = len(q_words & c_words) / max(
+            len(q_words | c_words), 1
+        )
+        scored.append((score, chunk))
+    scored.sort(reverse=True)
+    best = [c for _, c in scored[:3]]
 
-                        # B) BM25 KEYWORD SEARCH — find chunks with matching words
-                        # This catches exact terminology vector search might miss
-                        if st.session_state.all_texts:
-                            # Tokenize all chunks (split into words)
-                            tokenized = [
-                                t.lower().split()
-                                for t in st.session_state.all_texts
-                            ]
-                            bm25 = BM25Okapi(tokenized)
-                            # Score each chunk for this query
-                            scores = bm25.get_scores(q.lower().split())
-                            # Get top 3 scoring chunks
-                            top_idx = sorted(
-                                range(len(scores)),
-                                key=lambda i: scores[i],
-                                reverse=True
-                            )[:3]
-                            all_chunks.extend([
-                                st.session_state.all_texts[i]
-                                for i in top_idx
-                            ])
-
-                    # ---- STEP 3: DEDUPLICATE ----
-                    # Remove duplicate chunks (same text found by both searches)
-                    unique_chunks = list(dict.fromkeys(all_chunks))
-
-                    # ---- STEP 4: RERANK ----
-                    # Score each chunk by word overlap with the question
-                    # Best chunks rise to the top
-                    q_words = set(question.lower().split())
-                    scored = []
-                    for chunk in unique_chunks:
-                        c_words = set(chunk.lower().split())
-                        # Jaccard similarity: shared words / all words
-                        overlap = len(q_words & c_words)
-                        union = len(q_words | c_words)
-                        score = overlap / max(union, 1)
-                        scored.append((score, chunk))
-                    scored.sort(reverse=True)
-
-                    # Take top 4 chunks as context
-                    best = [chunk for _, chunk in scored[:4]]
-
-                    # ---- STEP 5: BUILD CONTEXT ----
-                    context = "\n\n---\n\n".join(best)
-
-                    # Include recent chat history for memory
+                    context = "\n\n".join(best)
                     history = ""
                     for m in st.session_state.messages[-4:]:
-                        role = "User" if m["role"] == "user" else "Assistant"
-                        history += f"{role}: {m['content']}\n"
+                        history += f"{m['role'].upper()}: {m['content']}\n"
 
-                    # ---- STEP 6: GENERATE ANSWER ----
                     ans = groq_client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
-                        messages=[{
-                            "role": "system",
-                            "content": (
-                                "You are DocMind AI, an expert document assistant. "
-                                "Answer questions using ONLY the provided context. "
-                                "If the answer is not in the context, say "
-                                "'I couldn't find this in the document.' "
-                                "Be clear, precise, and helpful."
-                            )
-                        }, {
-                            "role": "user",
-                            "content": (
-                                f"Conversation History:\n{history}\n\n"
-                                f"Document Context:\n{context}\n\n"
-                                f"Question: {question}\n\nAnswer:"
-                            )
-                        }],
-                        temperature=0.1,    # Low = more accurate, less creative
-                        max_tokens=800
+                        messages=[{"role": "user", "content":
+                            f"You are DocMind AI assistant.\n"
+                            f"Answer using ONLY context below.\n"
+                            f"History: {history}\n"
+                            f"Context: {context}\n"
+                            f"Question: {question}\nAnswer:"}]
                     )
                     answer = ans.choices[0].message.content
 
-                # Save to chat history
                 st.session_state.messages.append({
-                    "role": "user",
-                    "content": question
+                    "role": "user", "content": question
                 })
                 st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer
+                    "role": "assistant", "content": answer
                 })
                 st.rerun()
 
@@ -688,22 +569,27 @@ else:
 
     # ---- SETTINGS ----
     elif "Settings" in page:
+
         st.markdown("""
         <div style='font-family:Syne,sans-serif; font-size:1.8rem;
                     font-weight:800; color:white; margin-bottom:1.5rem;'>
             ⚙️ Settings
         </div>""", unsafe_allow_html=True)
 
+        # ============================================
+        # CHECK SUBSCRIPTION STATUS
+        # ============================================
         from payments import check_subscription, create_checkout_session
         sub = check_subscription(st.session_state.email)
 
-        # Account info
+        # Show account info
         st.markdown(f"""
         <div style='background:rgba(255,255,255,0.03);
                     border:1px solid rgba(255,255,255,0.08);
                     border-radius:16px; padding:1.5rem;
                     margin-bottom:1rem;'>
-            <div style='color:white; font-weight:600; margin-bottom:1rem;'>
+            <div style='color:white; font-weight:600;
+                        margin-bottom:1rem;'>
                 👤 Account Info
             </div>
             <div style='color:rgba(255,255,255,0.5);
@@ -715,14 +601,15 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Subscription status
+        # Show subscription status
         if sub["active"]:
             st.markdown("""
             <div style='background:rgba(16,185,129,0.1);
                         border:1px solid rgba(16,185,129,0.3);
                         border-radius:16px; padding:1.5rem;
                         margin-bottom:1rem;'>
-                <div style='color:#10b981; font-weight:600; font-size:1.1rem;'>
+                <div style='color:#10b981; font-weight:600;
+                            font-size:1.1rem;'>
                     ✅ PRO Plan Active
                 </div>
                 <div style='color:rgba(255,255,255,0.5);
@@ -734,7 +621,9 @@ else:
 
             if st.button("Cancel Subscription"):
                 from payments import cancel_subscription
-                result = cancel_subscription(st.session_state.email)
+                result = cancel_subscription(
+                    st.session_state.email
+                )
                 if result["success"]:
                     st.success("Subscription cancelled!")
                 else:
@@ -745,7 +634,8 @@ else:
                         border:1px solid rgba(99,102,241,0.3);
                         border-radius:16px; padding:1.5rem;
                         margin-bottom:1rem;'>
-                <div style='color:white; font-weight:600; font-size:1.1rem;'>
+                <div style='color:white; font-weight:600;
+                            font-size:1.1rem;'>
                     🆓 Free Plan
                 </div>
                 <div style='color:rgba(255,255,255,0.5);
@@ -772,20 +662,28 @@ else:
                     ✅ Priority support<br>
                     ✅ Advanced features
                 </div>
-                <div style='color:white; font-size:1.5rem; font-weight:800;'>
+                <div style='color:white; font-size:1.5rem;
+                            font-weight:800;'>
                     $29<span style='font-size:0.9rem;
                     color:rgba(255,255,255,0.5);'>/month</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button("⚡ Upgrade to PRO →", use_container_width=True):
+            if st.button(
+                "⚡ Upgrade to PRO →",
+                use_container_width=True
+            ):
                 result = create_checkout_session(
                     st.session_state.email,
                     st.session_state.uid
                 )
                 if result["success"]:
-                    st.markdown(f"[Click here to pay →]({result['url']})")
-                    st.info("Click the link above to complete payment!")
+                    st.markdown(
+                        f"[Click here to pay →]({result['url']})"
+                    )
+                    st.info(
+                        "Click the link above to complete payment!"
+                    )
                 else:
                     st.error("Payment error! Try again!")
