@@ -1,9 +1,9 @@
- # ============================================
+# ============================================
 # DOCMIND AI — International Level SaaS
 # Firebase Auth + Hybrid RAG + Beautiful UI
 # ============================================
 import streamlit as st
-from auth import signup_user, login_user, verify_token
+from auth import signup_user, login_user
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from rank_bm25 import BM25Okapi
@@ -67,14 +67,6 @@ st.markdown("""
     letter-spacing: 3px;
     text-transform: uppercase;
     margin-bottom: 2rem;
-}
-
-.auth-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 24px;
-    padding: 2.5rem;
-    box-shadow: 0 25px 50px rgba(0,0,0,0.5);
 }
 
 .user-bubble {
@@ -152,7 +144,7 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
 """, unsafe_allow_html=True)
 
 # ============================================
-# SESSION STATE
+# SESSION STATE INITIALIZATION
 # ============================================
 for key, val in {
     "logged_in": False,
@@ -186,20 +178,24 @@ if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
 
-        # Tab buttons
+        # Toggle tabs
         t1, t2 = st.columns(2)
         with t1:
-            if st.button("Sign In",
+            if st.button(
+                "Sign In",
                 use_container_width=True,
                 type="primary" if st.session_state.auth_mode == "login"
-                else "secondary"):
+                else "secondary"
+            ):
                 st.session_state.auth_mode = "login"
                 st.rerun()
         with t2:
-            if st.button("Sign Up",
+            if st.button(
+                "Sign Up",
                 use_container_width=True,
                 type="primary" if st.session_state.auth_mode == "signup"
-                else "secondary"):
+                else "secondary"
+            ):
                 st.session_state.auth_mode = "signup"
                 st.rerun()
 
@@ -214,9 +210,7 @@ if not st.session_state.logged_in:
                 Welcome Back 👋
             </div>""", unsafe_allow_html=True)
 
-            email = st.text_input(
-                "Email", placeholder="Enter your email"
-            )
+            email = st.text_input("Email", placeholder="Enter your email")
             password = st.text_input(
                 "Password", type="password",
                 placeholder="Enter your password"
@@ -249,12 +243,8 @@ if not st.session_state.logged_in:
                 Create Account 🚀
             </div>""", unsafe_allow_html=True)
 
-            name = st.text_input(
-                "Full Name", placeholder="Your name"
-            )
-            email = st.text_input(
-                "Email", placeholder="your@email.com"
-            )
+            name = st.text_input("Full Name", placeholder="Your name")
+            email = st.text_input("Email", placeholder="your@email.com")
             password = st.text_input(
                 "Password", type="password",
                 placeholder="Min 6 characters"
@@ -266,10 +256,7 @@ if not st.session_state.logged_in:
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            if st.button(
-                "Create Account →",
-                use_container_width=True
-            ):
+            if st.button("Create Account →", use_container_width=True):
                 if not all([name, email, password, confirm]):
                     st.warning("Please fill all fields!")
                 elif len(password) < 6:
@@ -278,13 +265,9 @@ if not st.session_state.logged_in:
                     st.error("Passwords do not match!")
                 else:
                     with st.spinner("Creating account..."):
-                        result = signup_user(
-                            email, password, name
-                        )
+                        result = signup_user(email, password, name)
                     if result["success"]:
-                        st.success(
-                            "Account created! Please sign in!"
-                        )
+                        st.success("Account created! Please sign in!")
                         st.session_state.auth_mode = "login"
                         st.rerun()
                     else:
@@ -316,12 +299,10 @@ else:
                     👤
                 </div>
                 <div>
-                    <div style='color:white; font-weight:600;
-                                font-size:0.9rem;'>
+                    <div style='color:white; font-weight:600; font-size:0.9rem;'>
                         {st.session_state.username}
                     </div>
-                    <div style='color:rgba(255,255,255,0.4);
-                                font-size:0.75rem;'>
+                    <div style='color:rgba(255,255,255,0.4); font-size:0.75rem;'>
                         {st.session_state.email}
                     </div>
                 </div>
@@ -331,10 +312,7 @@ else:
 
         page = st.radio(
             "",
-            ["🏠  Dashboard",
-             "💬  Chat",
-             "📊  Analytics",
-             "⚙️  Settings"],
+            ["🏠  Dashboard", "💬  Chat", "📊  Analytics", "⚙️  Settings"],
             label_visibility="collapsed"
         )
 
@@ -372,8 +350,7 @@ else:
                     <div class='stat-number'>{num}</div>
                     <div style='color:rgba(255,255,255,0.5);
                                 font-size:0.8rem; margin-top:4px;
-                                text-transform:uppercase;
-                                letter-spacing:1px;'>
+                                text-transform:uppercase; letter-spacing:1px;'>
                         {label}
                     </div>
                 </div>""", unsafe_allow_html=True)
@@ -401,14 +378,13 @@ else:
                 label_visibility="collapsed"
             )
             if uploaded:
-                with st.spinner("⚡ Processing..."):
+                with st.spinner("⚡ Processing your PDF..."):
                     with tempfile.NamedTemporaryFile(
                         delete=False, suffix=".pdf"
                     ) as tmp:
                         tmp.write(uploaded.read())
                         tmp_path = tmp.name
 
-                    from langchain_community.document_loaders import PyPDFLoader
                     loader = PyPDFLoader(tmp_path)
                     pages = loader.load()
                     splitter = RecursiveCharacterTextSplitter(
@@ -435,17 +411,18 @@ else:
                     st.session_state.pdf_ready = True
                     st.session_state.pdf_name = uploaded.name
                 st.rerun()
+
         else:
             st.success(f"✅ {st.session_state.pdf_name} ready!")
 
-        if st.button("📄 Upload New PDF"):
-            st.session_state.pdf_ready = False
-            st.session_state.messages = []
-            st.rerun()
+            if st.button("📄 Upload New PDF"):
+                st.session_state.pdf_ready = False
+                st.session_state.messages = []
+                st.rerun()
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # Show messages
+            # Show chat messages
             for msg in st.session_state.messages:
                 if msg["role"] == "user":
                     st.markdown(
@@ -467,76 +444,77 @@ else:
                         unsafe_allow_html=True
                     )
 
-            question = st.chat_input(
-                "Ask anything about your document..."
-            )
+            question = st.chat_input("Ask anything about your document...")
 
             if question:
-                groq_client = Groq(
-                    api_key=os.environ.get("GROQ_API_KEY")
-                )
+                groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
                 with st.spinner("⚡ Thinking..."):
-    # Multi query
-    r = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content":
-            f"Generate 3 search queries for: {question}\n"
-            f"Return 3 questions only, one per line."}]
-    )
-    queries = r.choices[0].message.content.strip().split("\n")
-    queries.append(question)
+                    # Multi query generation
+                    r = groq_client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "user", "content":
+                            f"Generate 3 search queries for: {question}\n"
+                            f"Return 3 questions only, one per line."}]
+                    )
+                    queries = r.choices[0].message.content.strip().split("\n")
+                    queries.append(question)
 
-    # Hybrid search
-    all_chunks = []
-    for q in queries:
-        # Vector search via ChromaDB
-        vr = st.session_state.collection.query(
-            query_texts=[q], n_results=3
-        )
-        all_chunks.extend(vr["documents"][0])
+                    # Hybrid search
+                    all_chunks = []
+                    for q in queries:
+                        # Vector search via ChromaDB
+                        vr = st.session_state.collection.query(
+                            query_texts=[q], n_results=3
+                        )
+                        all_chunks.extend(vr["documents"][0])
 
-        # BM25 keyword search
-        tokenized = [
-            t.lower().split()
-            for t in st.session_state.all_texts
-        ]
-        bm25 = BM25Okapi(tokenized)
-        scores = bm25.get_scores(q.lower().split())
-        top_idx = sorted(
-            range(len(scores)),
-            key=lambda i: scores[i],
-            reverse=True
-        )[:3]
-        all_chunks.extend([
-            st.session_state.all_texts[i]
-            for i in top_idx
-        ])
+                        # BM25 keyword search
+                        if st.session_state.all_texts:
+                            tokenized = [
+                                t.lower().split()
+                                for t in st.session_state.all_texts
+                            ]
+                            bm25 = BM25Okapi(tokenized)
+                            scores = bm25.get_scores(q.lower().split())
+                            top_idx = sorted(
+                                range(len(scores)),
+                                key=lambda i: scores[i],
+                                reverse=True
+                            )[:3]
+                            all_chunks.extend([
+                                st.session_state.all_texts[i]
+                                for i in top_idx
+                            ])
 
-    # Remove duplicates
-    unique = list(set(all_chunks))
+                    # Remove duplicates
+                    unique = list(set(all_chunks))
 
-    # Simple keyword reranking - no torch needed!
-    q_words = set(question.lower().split())
-    scored = []
-    for chunk in unique:
-        c_words = set(chunk.lower().split())
-        score = len(q_words & c_words) / max(
-            len(q_words | c_words), 1
-        )
-        scored.append((score, chunk))
-    scored.sort(reverse=True)
-    best = [c for _, c in scored[:3]]
+                    # Simple keyword reranking
+                    q_words = set(question.lower().split())
+                    scored = []
+                    for chunk in unique:
+                        c_words = set(chunk.lower().split())
+                        score = len(q_words & c_words) / max(
+                            len(q_words | c_words), 1
+                        )
+                        scored.append((score, chunk))
+                    scored.sort(reverse=True)
+                    best = [c for _, c in scored[:3]]
 
+                    # Build context and history
                     context = "\n\n".join(best)
                     history = ""
                     for m in st.session_state.messages[-4:]:
                         history += f"{m['role'].upper()}: {m['content']}\n"
 
+                    # Generate answer
                     ans = groq_client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[{"role": "user", "content":
                             f"You are DocMind AI assistant.\n"
                             f"Answer using ONLY context below.\n"
+                            f"If not in context say 'I dont know'.\n"
                             f"History: {history}\n"
                             f"Context: {context}\n"
                             f"Question: {question}\nAnswer:"}]
@@ -569,27 +547,22 @@ else:
 
     # ---- SETTINGS ----
     elif "Settings" in page:
-
         st.markdown("""
         <div style='font-family:Syne,sans-serif; font-size:1.8rem;
                     font-weight:800; color:white; margin-bottom:1.5rem;'>
             ⚙️ Settings
         </div>""", unsafe_allow_html=True)
 
-        # ============================================
-        # CHECK SUBSCRIPTION STATUS
-        # ============================================
         from payments import check_subscription, create_checkout_session
         sub = check_subscription(st.session_state.email)
 
-        # Show account info
+        # Account info
         st.markdown(f"""
         <div style='background:rgba(255,255,255,0.03);
                     border:1px solid rgba(255,255,255,0.08);
                     border-radius:16px; padding:1.5rem;
                     margin-bottom:1rem;'>
-            <div style='color:white; font-weight:600;
-                        margin-bottom:1rem;'>
+            <div style='color:white; font-weight:600; margin-bottom:1rem;'>
                 👤 Account Info
             </div>
             <div style='color:rgba(255,255,255,0.5);
@@ -601,15 +574,14 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Show subscription status
+        # Subscription status
         if sub["active"]:
             st.markdown("""
             <div style='background:rgba(16,185,129,0.1);
                         border:1px solid rgba(16,185,129,0.3);
                         border-radius:16px; padding:1.5rem;
                         margin-bottom:1rem;'>
-                <div style='color:#10b981; font-weight:600;
-                            font-size:1.1rem;'>
+                <div style='color:#10b981; font-weight:600; font-size:1.1rem;'>
                     ✅ PRO Plan Active
                 </div>
                 <div style='color:rgba(255,255,255,0.5);
@@ -621,9 +593,7 @@ else:
 
             if st.button("Cancel Subscription"):
                 from payments import cancel_subscription
-                result = cancel_subscription(
-                    st.session_state.email
-                )
+                result = cancel_subscription(st.session_state.email)
                 if result["success"]:
                     st.success("Subscription cancelled!")
                 else:
@@ -634,8 +604,7 @@ else:
                         border:1px solid rgba(99,102,241,0.3);
                         border-radius:16px; padding:1.5rem;
                         margin-bottom:1rem;'>
-                <div style='color:white; font-weight:600;
-                            font-size:1.1rem;'>
+                <div style='color:white; font-weight:600; font-size:1.1rem;'>
                     🆓 Free Plan
                 </div>
                 <div style='color:rgba(255,255,255,0.5);
@@ -662,28 +631,20 @@ else:
                     ✅ Priority support<br>
                     ✅ Advanced features
                 </div>
-                <div style='color:white; font-size:1.5rem;
-                            font-weight:800;'>
+                <div style='color:white; font-size:1.5rem; font-weight:800;'>
                     $29<span style='font-size:0.9rem;
                     color:rgba(255,255,255,0.5);'>/month</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button(
-                "⚡ Upgrade to PRO →",
-                use_container_width=True
-            ):
+            if st.button("⚡ Upgrade to PRO →", use_container_width=True):
                 result = create_checkout_session(
                     st.session_state.email,
                     st.session_state.uid
                 )
                 if result["success"]:
-                    st.markdown(
-                        f"[Click here to pay →]({result['url']})"
-                    )
-                    st.info(
-                        "Click the link above to complete payment!"
-                    )
+                    st.markdown(f"[Click here to pay →]({result['url']})")
+                    st.info("Click the link above to complete payment!")
                 else:
                     st.error("Payment error! Try again!")
