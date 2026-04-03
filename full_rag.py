@@ -10,12 +10,6 @@ from langchain_community.document_loaders import PyPDFLoader
 # RecursiveCharacterTextSplitter: cuts text into chunks
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# SentenceTransformer: converts text to numbers
-from sentence_transformers import SentenceTransformer
-
-# CrossEncoder: reranks chunks by relevance score
-from sentence_transformers import CrossEncoder
-
 # BM25Okapi: keyword based search engine
 from rank_bm25 import BM25Okapi
 
@@ -39,13 +33,6 @@ import shutil
 # Replace with your real key for local testing
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# Embedding model: converts text to 384 numbers
-# FREE model from HuggingFace
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-
-# Reranker: scores each chunk for relevance
-# FREE cross-encoder model
-reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 # ============================================
 # PERSISTENT STORAGE SETUP
@@ -186,23 +173,12 @@ def build_database_with_metadata(texts, metadatas):
     if texts:
         print(f"Adding {len(texts)} new chunks to database...")
 
-        # Convert texts to number embeddings
-        embeddings = embedder.encode(texts).tolist()
-
-        # Count existing chunks to make unique IDs
-        existing_count = collection.count()
-
-        # Store texts + embeddings + metadata
-        # IDs start after existing chunks
-        collection.add(
-            documents=texts,
-            embeddings=embeddings,
-            metadatas=metadatas,
-            ids=[
-                f"chunk_{existing_count + i}"
-                for i in range(len(texts))
-            ]
-        )
+      collection.add(
+    documents=texts,
+    metadatas=metadatas,
+    ids=[f"chunk_{existing_count + i}" 
+         for i in range(len(texts))]
+)
         print(f"Database now has {collection.count()} total chunks!")
     else:
         print(f"No new chunks. Database has {collection.count()} chunks!")
@@ -302,12 +278,11 @@ def search_with_sources(question, collection, all_texts):
 
         # --- Vector Search ---
         # Finds chunks by semantic meaning
-        q_embedding = embedder.encode([query]).tolist()
         vector_results = collection.query(
-            query_embeddings=q_embedding,
-            n_results=3,
-            include=["documents", "metadatas"]
-        )
+    query_texts=[query],
+    n_results=3,
+    include=["documents", "metadatas"]
+)
 
         # Add vector results with their sources
         for doc, meta in zip(
@@ -342,16 +317,14 @@ def search_with_sources(question, collection, all_texts):
     # Step 4: Rerank by relevance score
     if unique_chunks:
         # Create [question, chunk] pairs for reranker
-        pairs = [[question, c] for c in unique_chunks]
-
-        # Score each pair
-        scores = reranker.predict(pairs)
-
-        # Sort by score highest first
-        ranked = sorted(
-            zip(scores, unique_chunks, unique_sources),
-            reverse=True
-        )
+        # Simple keyword reranking - no torch needed!
+q_words = set(question.lower().split())
+scored = []
+for chunk, source in zip(unique_chunks, unique_sources):
+    c_words = set(chunk.lower().split())
+    score = len(q_words & c_words) / max(len(q_words | c_words), 1)
+    scored.append((score, chunk, source))
+ranked = sorted(scored, reverse=True)
 
         # Take top 3 most relevant chunks
         best_chunks = [c for _, c, _ in ranked[:3]]
