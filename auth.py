@@ -8,6 +8,8 @@
 import firebase_admin
 from firebase_admin import credentials, auth
 
+# requests: for Firebase REST API login
+import requests as req
 
 # os: file operations
 import os
@@ -15,27 +17,53 @@ import os
 # json: read config files
 import json
 
-# Import our Firebase config
-from firebase_config import FIREBASE_CONFIG
+# ============================================
+# FIREBASE CONFIG
+# Reads from environment variables on server
+# Or from firebase_config.py locally
+# ============================================
+try:
+    from firebase_config import FIREBASE_CONFIG
+except:
+    # On server - read from environment variables
+    FIREBASE_CONFIG = {
+        "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
+        "authDomain": os.environ.get("FIREBASE_AUTH_DOMAIN", ""),
+        "projectId": os.environ.get("FIREBASE_PROJECT_ID", ""),
+        "storageBucket": os.environ.get("FIREBASE_STORAGE_BUCKET", ""),
+        "messagingSenderId": os.environ.get("FIREBASE_SENDER_ID", ""),
+        "appId": os.environ.get("FIREBASE_APP_ID", ""),
+        "databaseURL": ""
+    }
+
+# Firebase API key for REST calls
+FIREBASE_API_KEY = FIREBASE_CONFIG.get("apiKey", "")
 
 # ============================================
 # INITIALIZE FIREBASE ADMIN
-# Uses serviceAccount.json for backend auth
-# This is the SECURE server-side connection!
+# Uses serviceAccount.json locally
+# Uses environment variables on server
 # ============================================
-
-# Path to service account file
-SERVICE_ACCOUNT_PATH = "serviceAccount.json"
-
-# Initialize only once!
 if not firebase_admin._apps:
-    # Load service account credentials
-    cred = credentials.Certificate(SERVICE_ACCOUNT_PATH)
-    # Connect to Firebase project
-    firebase_admin.initialize_app(cred)
-    print("Firebase Admin initialized!")
-import requests as req
-FIREBASE_API_KEY = FIREBASE_CONFIG["apiKey"]
+    try:
+        # Try local serviceAccount.json first
+        SERVICE_ACCOUNT_PATH = "serviceAccount.json"
+        if os.path.exists(SERVICE_ACCOUNT_PATH):
+            cred = credentials.Certificate(SERVICE_ACCOUNT_PATH)
+            firebase_admin.initialize_app(cred)
+            print("Firebase Admin initialized from file!")
+        else:
+            # On server - use environment variable
+            service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "")
+            if service_account_json:
+                service_account_dict = json.loads(service_account_json)
+                cred = credentials.Certificate(service_account_dict)
+                firebase_admin.initialize_app(cred)
+                print("Firebase Admin initialized from env!")
+            else:
+                print("Warning: No Firebase credentials found!")
+    except Exception as e:
+        print(f"Firebase init error: {e}")
 
 # ============================================
 # FUNCTION 1: Sign Up New User
@@ -58,7 +86,6 @@ def signup_user(email, password, display_name):
             "name": display_name
         }
     except Exception as e:
-        # Return error if signup fails
         return {
             "success": False,
             "error": str(e)
@@ -69,7 +96,7 @@ def signup_user(email, password, display_name):
 # Input: email + password
 # Output: token + user info or error
 # ============================================
-    def login_user(email, password):
+def login_user(email, password):
     try:
         # Login using Firebase REST API
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
@@ -82,17 +109,22 @@ def signup_user(email, password, display_name):
         data = response.json()
 
         if "error" in data:
-            return {"success": False, "error": "Wrong email or password!"}
+            return {
+                "success": False,
+                "error": "Wrong email or password!"
+            }
 
         token = data["idToken"]
         name = data.get("displayName", email)
+        uid = data.get("localId", "")
+
         print(f"User logged in: {email}")
         return {
             "success": True,
             "token": token,
             "email": email,
             "name": name,
-            "uid": user["localId"]
+            "uid": uid
         }
     except Exception as e:
         return {
@@ -104,11 +136,9 @@ def signup_user(email, password, display_name):
 # FUNCTION 3: Verify Token
 # Input: token from logged in user
 # Output: user info or error
-# WHY: Every API request must be verified!
 # ============================================
 def verify_token(token):
     try:
-        # Verify token with Firebase Admin
         decoded = auth.verify_id_token(token)
         return {
             "success": True,
