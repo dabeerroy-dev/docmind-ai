@@ -1,7 +1,6 @@
 streamlit
 langchain-community
 langchain-text-splitters
-sentence-transformers
 chromadb
 groq
 pypdf
@@ -12,3 +11,4 @@ fastapi
 uvicorn
 python-multipart
 requests
+numpy
